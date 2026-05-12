@@ -13,6 +13,9 @@ with your actual Supabase project values.
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Lean Bulk Nutritionist</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
@@ -52,13 +55,19 @@ with your actual Supabase project values.
       color: #333;
     }
 
-    input, select {
+    input, select, textarea {
       width: 100%;
       padding: 10px;
       margin-top: 6px;
       border-radius: 10px;
       border: 1px solid #ddd;
       font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
     }
 
     button {
@@ -74,7 +83,11 @@ with your actual Supabase project values.
     }
 
     .secondary {
-      background: #333;
+      background: #444;
+    }
+
+    .danger {
+      background: #8b0000;
     }
 
     .status {
@@ -99,14 +112,26 @@ with your actual Supabase project values.
 
     .entry {
       font-size: 13px;
-      padding: 6px 0;
+      padding: 10px 0;
       border-bottom: 1px solid #eee;
     }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+    .entry-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .small-btn {
+      width: auto;
+      padding: 6px 10px;
+      font-size: 12px;
+      margin-top: 0;
+    }
+
+    .loading {
+      opacity: 0.6;
     }
   </style>
 </head>
@@ -115,16 +140,16 @@ with your actual Supabase project values.
 <div class="container">
 
   <h1>Lean Bulk Nutritionist</h1>
-  <div class="sub">Weekly decision system with backup-safe storage</div>
+  <div class="sub">Cloud-backed weekly nutrition coaching system</div>
 
   <div class="card">
     <h2>Monday Check-In</h2>
 
-    <label>Weight Gain Rate (kg/week)</label>
-    <input id="weightRate" type="number" step="0.01" />
+    <label>Weight Gain Rate (kg/week from Happy Scale)</label>
+    <input id="weightRate" type="number" step="0.01" placeholder="0.16" />
 
     <label>Waist (cm)</label>
-    <input id="waist" type="number" step="0.1" />
+    <input id="waist" type="number" step="0.1" placeholder="82.5" />
 
     <label>Performance</label>
     <select id="performance">
@@ -133,87 +158,154 @@ with your actual Supabase project values.
       <option value="declining">Declining</option>
     </select>
 
-    <button onclick="saveEntry()">Save Check-In</button>
-  </div>
+    <label>Optional Notes</label>
+    <textarea id="notes" placeholder="Travel, illness, unusual training week, etc."></textarea>
 
-  <div class="card">
-    <h2>Controls</h2>
-
-    <button onclick="exportData()">Export Backup</button>
-    <button class="secondary" onclick="document.getElementById('fileInput').click()">Import Backup</button>
-    <input type="file" id="fileInput" style="display:none" onchange="importData(event)" />
-
-    <div class="muted" id="backupInfo">No backup created yet.</div>
+    <button onclick="saveEntry()">Save Weekly Check-In</button>
   </div>
 
   <div class="card">
     <h2>Nutritionist Decision</h2>
-    <div id="output">Add your first check-in.</div>
+    <div id="output">Loading...</div>
   </div>
 
   <div class="card">
     <h2>History</h2>
-    <div id="history"></div>
+    <div id="history">Loading...</div>
   </div>
 
 </div>
 
 <script>
 
-let data = JSON.parse(localStorage.getItem("leanBulkData") || "[]");
-let lastBackup = localStorage.getItem("lastBackup") || null;
+// =========================
+// SUPABASE CONFIG
+// =========================
 
-function saveEntry() {
+const SUPABASE_URL = "https://sjukvkxivljrpguizptz.supabase.co";
+
+const SUPABASE_KEY = "sb_publishable_ODqgAwlkofmedeiguZEwzg_YiH_DDEl";
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+// =========================
+// APP STATE
+// =========================
+
+let data = [];
+
+// =========================
+// SAVE ENTRY
+// =========================
+
+async function saveEntry() {
+
   const weightRate = parseFloat(document.getElementById("weightRate").value);
   const waist = parseFloat(document.getElementById("waist").value);
   const performance = document.getElementById("performance").value;
+  const notes = document.getElementById("notes").value;
 
-  if (isNaN(weightRate) || isNaN(waist)) return;
+  if (isNaN(weightRate) || isNaN(waist)) {
+    alert("Please enter valid values.");
+    return;
+  }
 
-  data.push({
-    date: new Date().toISOString().split("T")[0],
-    weightRate,
-    waist,
-    performance
-  });
-
-  localStorage.setItem("leanBulkData", JSON.stringify(data));
-  render();
-}
-
-function exportData() {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "lean_bulk_backup.json";
-  a.click();
-
-  lastBackup = new Date().toISOString().split("T")[0];
-  localStorage.setItem("lastBackup", lastBackup);
-  render();
-}
-
-function importData(event) {
-  const file = event.target.files[0];
-  const reader = new FileReader();
-
-  reader.onload = function(e) {
-    try {
-      data = JSON.parse(e.target.result);
-      localStorage.setItem("leanBulkData", JSON.stringify(data));
-      render();
-    } catch (err) {
-      alert("Invalid file");
-    }
+  const entry = {
+    entry_date: new Date().toISOString().split("T")[0],
+    weight_rate: weightRate,
+    waist_cm: waist,
+    performance: performance,
+    notes: notes
   };
 
-  reader.readAsText(file);
+  const { error } = await supabase
+    .from("lean_bulk_checkins")
+    .insert([entry]);
+
+  if (error) {
+    console.error(error);
+    alert("Error saving entry. Check console.");
+    return;
+  }
+
+  document.getElementById("weightRate").value = "";
+  document.getElementById("waist").value = "";
+  document.getElementById("notes").value = "";
+
+  await loadData();
 }
 
+// =========================
+// LOAD DATA
+// =========================
+
+async function loadData() {
+
+  document.body.classList.add("loading");
+
+  const { data: rows, error } = await supabase
+    .from("lean_bulk_checkins")
+    .select("*")
+    .order("entry_date", { ascending: true });
+
+  document.body.classList.remove("loading");
+
+  if (error) {
+    console.error(error);
+    document.getElementById("output").innerHTML = "Database connection error.";
+    return;
+  }
+
+  data = rows.map(r => ({
+    id: r.id,
+    date: r.entry_date,
+    weightRate: Number(r.weight_rate),
+    waist: Number(r.waist_cm),
+    performance: r.performance,
+    notes: r.notes || ""
+  }));
+
+  render();
+}
+
+// =========================
+// DELETE ENTRY
+// =========================
+
+async function deleteEntry(id) {
+
+  const confirmed = confirm("Delete this entry?");
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("lean_bulk_checkins")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error(error);
+    alert("Delete failed.");
+    return;
+  }
+
+  await loadData();
+}
+
+// =========================
+// RENDER UI
+// =========================
+
 function render() {
-  if (data.length === 0) return;
+
+  if (data.length === 0) {
+    document.getElementById("output").innerHTML = "No check-ins yet.";
+    document.getElementById("history").innerHTML = "No history yet.";
+    return;
+  }
 
   const latest = data[data.length - 1];
   const prev = data[data.length - 2];
@@ -222,60 +314,134 @@ function render() {
   const last3 = data.slice(-3);
 
   const weightRate = latest.weightRate;
-  const waistChange = prev ? latest.waist - prev.waist : 0;
+  const waistChange = prev
+    ? latest.waist - prev.waist
+    : 0;
 
-  const low2w = last2.length === 2 && last2.every(e => e.weightRate < 0.10);
-  const high2w = last2.length === 2 && last2.every(e => e.weightRate > 0.30);
+  const low2w =
+    last2.length === 2 &&
+    last2.every(e => e.weightRate < 0.10);
 
-  const inTarget = weightRate >= 0.14 && weightRate <= 0.20;
+  const high2w =
+    last2.length === 2 &&
+    last2.every(e => e.weightRate > 0.30);
+
+  const inTarget =
+    weightRate >= 0.14 &&
+    weightRate <= 0.20;
 
   let confidence = "Low";
+
   if (data.length >= 6) confidence = "High";
   else if (data.length >= 3) confidence = "Moderate";
+
+  const variability =
+    last3.length >= 3
+      ? Math.abs(last3[0].weightRate - last3[2].weightRate)
+      : null;
+
+  if (
+    confidence === "High" &&
+    variability !== null &&
+    variability < 0.05
+  ) {
+    confidence = "Very High";
+  }
 
   let status = "Monitoring Phase";
   let recommendation = "No change recommended yet.";
   let rationale = "Insufficient stable trend signal.";
 
-  if (inTarget && waistChange <= 0.5 && latest.performance === "improving") {
+  if (
+    inTarget &&
+    waistChange <= 0.5 &&
+    latest.performance === "improving"
+  ) {
     status = "Optimal Lean Bulk Trajectory";
     recommendation = "Maintain current intake.";
-    rationale = "Weight gain is in target range with stable waist and improving performance.";
+    rationale = "Weight gain is within target range while waist remains stable and training response is positive.";
   }
 
-  else if (low2w && latest.performance !== "improving") {
+  else if (
+    low2w &&
+    latest.performance !== "improving"
+  ) {
     status = "Under-fuelling Likely";
     recommendation = "Increase intake slightly (~100 kcal/day).";
-    rationale = "Sustained low gain suggests insufficient energy availability.";
+    rationale = "Two consecutive low-gain weeks without strong performance response suggest insufficient surplus.";
   }
 
-  else if (high2w && waistChange > 0.5) {
+  else if (
+    high2w &&
+    waistChange > 0.5
+  ) {
     status = "Excessive Surplus Likely";
     recommendation = "Reduce intake slightly (~100–150 kcal/day).";
-    rationale = "Sustained high gain with waist increase suggests excessive surplus.";
+    rationale = "Sustained elevated gain rate with waist increase suggests surplus exceeds productive range.";
+  }
+
+  else if (
+    weightRate < 0.14 &&
+    latest.performance === "improving"
+  ) {
+    status = "Possible Recomposition Response";
+    recommendation = "Hold intake and reassess next week.";
+    rationale = "Bodyweight gain is slightly below target but performance is improving, which may reflect productive adaptation rather than under-fuelling.";
+  }
+
+  else {
+    status = "No Strong Signal";
+    recommendation = "Continue current plan.";
+    rationale = "Current data does not yet justify an intake adjustment.";
   }
 
   document.getElementById("output").innerHTML = `
+
     <div class="status">${status}</div>
+
     <div class="pill">Confidence: ${confidence}</div>
+
     <p>${recommendation}</p>
+
     <p class="muted">${rationale}</p>
+
     <hr/>
-    <p><b>Trend:</b> ${weightRate.toFixed(2)} kg/week</p>
-    <p><b>Waist change:</b> ${waistChange.toFixed(1)} cm</p>
+
+    <p><b>Current gain rate:</b> ${weightRate.toFixed(2)} kg/week</p>
+
+    <p><b>Weekly waist change:</b> ${waistChange.toFixed(1)} cm</p>
+
+    <p><b>Performance trend:</b> ${latest.performance}</p>
+
   `;
 
   document.getElementById("history").innerHTML = data
-    .slice().reverse()
-    .map(e => `<div class='entry'>${e.date} — ${e.weightRate} kg/week — ${e.waist} cm — ${e.performance}</div>`)
-    .join("");
+    .slice()
+    .reverse()
+    .map(e => `
 
-  document.getElementById("backupInfo").innerText = lastBackup
-    ? `Last backup: ${lastBackup}`
-    : "No backup created yet.";
+      <div class="entry">
+
+        <div class="entry-top">
+          <strong>${e.date}</strong>
+          <button class="small-btn danger" onclick="deleteEntry(${e.id})">Delete</button>
+        </div>
+
+        <div>${e.weightRate} kg/week • ${e.waist} cm • ${e.performance}</div>
+
+        ${e.notes ? `<div class="muted">${e.notes}</div>` : ""}
+
+      </div>
+
+    `)
+    .join("");
 }
 
-render();
+// =========================
+// INIT
+// =========================
+
+loadData();
 
 </script>
 
